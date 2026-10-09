@@ -449,7 +449,7 @@ def getAllJumps(app, row, col, state, possibleMoves):
     for (drow, dcol) in possibleMoves:
         midRow = row + drow
         midCol = col + dcol
-        if spotOnBoard(app, midRow, midCol) and app.board[midRow][midCol] != 0:
+        if spotOnBoard(app, midRow, midCol) and state[midRow][midCol] != 0:
         # check to make sure there is an intermmediate ball to jump over
             newDRow = 2 * drow
             newDCol = 2 * dcol
