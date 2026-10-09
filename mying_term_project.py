@@ -61,6 +61,7 @@ def appStarted(app):
     app.gameOver = False
     app.gameStarted = False
     app.givingHint = False
+    app.hintEndTurn = False
     app.hintBall = (-1, -1) # location of ball that the hint says to move
     app.hintLocation = (-1, -1) # location that the hint says to move to
     app.timeRemaining = 30
@@ -379,12 +380,12 @@ def timerFired(app):
     
 # move ball when ball is pressed
 def mousePressed(app, event):
+    if app.givingHint:
+        app.givingHint = False
     checkButtons(app, event.x, event.y)
     # Animated positions must settle before another move can use them.
     if ballsMoving(app) or app.aiBall is not None or app.gameOver:
         return
-    if app.givingHint:
-        app.givingHint = False
     (row, col) = getCell(app, event.x, event.y)
     if app.selection == (-1, -1):
         for ball in app.balls:
@@ -427,11 +428,15 @@ def checkButtons(app, x, y):
     cx, cy = app.width - (app.width / 6), app.height / 12
     # give the player a hint if hint button is clicked
     if ((x < cx + 30) and (x > cx - 30) and (y < cy + 20) and (y > cy - 20) and
-        app.numPlayers == 1 and app.currentPlayer == 1):
+        app.numPlayers == 1 and app.currentPlayer == 1 and
+        not ballsMoving(app) and not app.gameOver):
         givePlayerHint(app)
     
 # change the player to the next player in list of players
 def changePlayer(app):
+    app.isJumping = False
+    app.selection = (-1, -1)
+    app.givingHint = False
     currentIndex = app.players.index(app.currentPlayer)
     if app.numPlayers == 1: # account for AI opponent if number of players
                             # entered is equal to 1
@@ -493,7 +498,7 @@ def getAllLegalJumps(app, row, col, state, possibleMoves):
     for (drow, dcol) in possibleJumps:
         newRow = row + drow
         newCol = col + dcol
-        if isLegalMove(app, row, col, newRow, newCol, state):
+        if spotOnBoard(app, newRow, newCol) and state[newRow][newCol] == 0:
             allLegalJumps.append((drow, dcol)) # check if all possible jumps are
                                                # legal
     return allLegalJumps
@@ -570,51 +575,56 @@ def getValue(app, state):
 # decide on best possible move for AI
 # https://github.com/Cledersonbc/tic-tac-toe-minimax
 # /blob/master/py_version/minimax.py
-def minimax(app, state, depth, player):
-    if player == 4:
-        best = [-1, -1, -1, -1, -infinity] # higher values are more beneficial for
-                                           # AI 
-        nextPlayer = 1
-    else:
-        best = [-1, -1, -1, -1, infinity] # lower values are more beneficial for
-                                          # player
-        nextPlayer = 4
-    if depth == 0 or AIGameOver(app, state): 
-        score = getValue(app, state)
-        return [-1, -1, -1, -1, score]
+def minimax(app, state, depth, player, selected=None, jumpsOnly=False):
+    nextPlayer = 1 if player == 4 else 4
+    best = [-1, -1, -1, -1, -infinity if player == 4 else infinity]
+    if depth == 0 or AIGameOver(app, state):
+        return [-1, -1, -1, -1, getValue(app, state)]
+    # Ending an already-started jump chain is a legal choice.
+    if jumpsOnly and selected is not None:
+        score = minimax(app, state, depth - 1, nextPlayer)[-1]
+        best = [*selected, *selected, score]
     currentState = copy.deepcopy(state)
-    if not app.isJumping:
-        for row in range(app.rows):
-            for col in range(app.cols):
-                if state[row][col] == player:
-                    moves = getAllTurnMoves(app, row, col, state)
-                    for ((newRow, newCol), path) in moves:
-                        # adjust state to account for changes in ball positions
-                        currentState[row][col] = 0
-                        currentState[newRow][newCol] = player
-                        score = minimax(app, currentState, depth - 1, nextPlayer)
-                        # backtrack the state
-                        currentState[row][col] = player
-                        currentState[newRow][newCol] = 0
-                        # adjust score to return best ball to move and best location
-                        # to move it to
-                        score[0] = row
-                        score[1] = col
-                        score[2] = newRow
-                        score[3] = newCol
-                        if player == 4:
-                            if score[-1] > best[-1]:
-                                best = score
-                        else:
-                            if score[-1] < best[-1]:
-                                best = score
-        return best
+    for row in range(app.rows):
+        for col in range(app.cols):
+            if state[row][col] != player:
+                continue
+            if selected is not None and (row, col) != selected:
+                continue
+            moves = getAllTurnMoves(app, row, col, state, jumpsOnly)
+            for ((newRow, newCol), path) in moves:
+                currentState[row][col] = 0
+                currentState[newRow][newCol] = player
+                score = minimax(app, currentState, depth - 1, nextPlayer)[-1]
+                currentState[row][col] = player
+                currentState[newRow][newCol] = 0
+                if ((player == 4 and score > best[-1]) or
+                    (player == 1 and score < best[-1])):
+                    best = [row, col, newRow, newCol, score]
+    # A blocked position has a finite value and no selected move.
+    if best[0] == -1:
+        best[-1] = getValue(app, state)
+    return best
 
-# use minimax to give the player a hint
+# Hints show the next hop, even when search chooses a longer jump chain.
 def givePlayerHint(app):
-    (ballRow, ballCol, newRow, newCol, value) = minimax(app, app.board, 3, 1)
+    if app.gameOver or ballsMoving(app):
+        return
+    selected = app.selection if app.isJumping else None
+    result = minimax(app, app.board, 3, 1, selected, app.isJumping)
+    ballRow, ballCol, newRow, newCol, value = result
+    if ballRow == -1:
+        app.givingHint = False
+        return
     app.hintBall = (ballRow, ballCol)
-    app.hintLocation = (newRow, newCol)
+    destination = (newRow, newCol)
+    app.hintEndTurn = destination == app.hintBall
+    if app.hintEndTurn:
+        app.hintLocation = app.hintBall
+    else:
+        turns = getAllTurnMoves(app, ballRow, ballCol, app.board, app.isJumping)
+        path = next(path for target, path in turns if target == destination)
+        app.hintLocation = path[0]
     app.givingHint = True
 
 #################################################
@@ -683,7 +693,9 @@ def drawMessage(app, canvas):
         if app.isJumping:
             # give instructions about ending turn
             cy = app.height - (app.height / 8)
-            message = "Click anywhere on the board to end your turn"
+            message = ("Hint: click the selected piece to end your turn"
+                       if app.givingHint and app.hintEndTurn else
+                       "Click anywhere on the board to end your turn")
             canvas.create_text(cx, cy, text = message, font = "futura 20")
         # display the remaining time left in a turn
         cx, cy = app.width / 6, app.height / 12
