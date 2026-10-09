@@ -186,7 +186,7 @@ def yellowWins(app):
     for ball in app.balls:
         if ball.color == "yellow":
             yellowSet.add((ball.row, ball.col))
-    if yellowSet == app.blueSpots:
+    if yellowSet == app.redSpots:
         app.winner = 4
         return True
     return False
