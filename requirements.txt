@@ -1,0 +1,3 @@
+Pillow
+requests
+pyscreenshot; sys_platform == "linux"
