@@ -357,7 +357,8 @@ def timerFired(app):
 def mousePressed(app, event):
     if app.givingHint:
         app.givingHint = False
-    checkButtons(app, event.x, event.y)
+    if checkButtons(app, event.x, event.y):
+        return
     # Animated positions must settle before another move can use them.
     if ballsMoving(app) or app.aiBall is not None or app.gameOver:
         return
@@ -400,12 +401,15 @@ def checkButtons(app, x, y):
     # begin new game if new game button is clicked
     if ((x < cx + 90) and (x > cx - 90) and (y < cy + 20) and (y > cy - 20)):
         appStarted(app)
+        return True
     cx, cy = app.width - (app.width / 6), app.height / 12
     # give the player a hint if hint button is clicked
     if ((x < cx + 30) and (x > cx - 30) and (y < cy + 20) and (y > cy - 20) and
         app.numPlayers == 1 and app.currentPlayer == 1 and
         not ballsMoving(app) and not app.gameOver):
         givePlayerHint(app)
+        return True
+    return False
     
 # change the player to the next player in list of players
 def changePlayer(app):
