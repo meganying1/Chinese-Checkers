@@ -39,4 +39,24 @@ Use **Hint** during your turn in single-player mode, or **Start a new game** to 
 - `cmu_112_graphics.py` — bundled CMU 15-112 graphics framework; its original comments and attribution are preserved.
 - `requirements.txt` — dependencies used by the bundled graphics framework.
 
-The game source is preserved from the original term project. Earlier milestone submissions, generated Python caches, and duplicate archives are omitted.
+The game originated as a 2021 term project. The development branch adds corrected simulated-state move generation, complete AI jump chains, mid-jump hints, and improved search and evaluation. Earlier milestone submissions, generated Python caches, and duplicate archives are omitted.
+
+## AI and search
+
+The AI searches three complete turns ahead. Breadth-first jump exploration finds every reachable destination and keeps a shortest legal hop sequence for animation. A turn may end at any reachable landing; loops back to the starting position are excluded.
+
+The evaluation prioritizes wins and losses, then scores distinct piece-to-target assignments using hex-grid distance, target occupancy, and the farthest piece from its goal. Distance is a positional heuristic rather than an exact number of turns, since jumps can cross several cells.
+
+Alpha-beta pruning, progress-based move ordering, and a per-search transposition table reduce repeated work. Cached cutoff results retain their lower/upper bound type. Recursive moves are applied and undone on a private board copy.
+
+During a human jump chain, hints consider only the selected piece's remaining jumps or ending the turn. A multi-hop recommendation highlights its next hop.
+
+## Tests
+
+The tests use Python's standard library and load game callbacks without opening a GUI:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+Coverage includes simulated-state jumps, full-turn paths and animation callbacks, mid-jump hints, all six target triangles, assignment costs checked against brute force, and optimized search compared with exhaustive minimax.

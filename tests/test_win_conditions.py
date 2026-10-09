@@ -48,6 +48,33 @@ class WinConditionTests(unittest.TestCase):
         self.assertEqual(self.app.winner, 4)
         self.assertEqual(self.app.currentPlayer, -1)
 
+    def test_all_six_players_use_their_opposite_triangle(self):
+        destinations = {
+            1: self.app.yellowSpots, 2: self.app.greenSpots,
+            3: self.app.blueSpots, 4: self.app.redSpots,
+            5: self.app.purpleSpots, 6: self.app.pinkSpots,
+        }
+        for player, spots in destinations.items():
+            with self.subTest(player=player):
+                board = [[0] * self.app.cols for _ in range(self.app.rows)]
+                for row, col in spots:
+                    board[row][col] = player
+                self.app.board = board
+                self.app.winner = None
+                self.assertTrue(GAME["playerWins"](self.app, board, player))
+                self.assertTrue(GAME["gameIsOver"](self.app))
+                self.assertEqual(self.app.winner, player)
+                row, col = next(iter(spots))
+                board[row][col] = 0
+                self.assertFalse(GAME["playerWins"](self.app, board, player))
+
+    def test_search_win_checks_do_not_set_live_winner(self):
+        state = [[0] * self.app.cols for _ in range(self.app.rows)]
+        for row, col in self.app.redSpots:
+            state[row][col] = 4
+        self.assertTrue(GAME["AIOpponentWins"](self.app, state))
+        self.assertIsNone(self.app.winner)
+
 
 if __name__ == "__main__":
     unittest.main()

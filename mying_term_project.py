@@ -7,7 +7,6 @@
 from cmu_112_graphics import *
 from math import inf as infinity
 from collections import deque
-import copy
 import time
 
 # create class for a ball
@@ -152,80 +151,56 @@ def setUpBlue(app):
 
 #################################################
 
-# determine if player 1 won
+# Every rule and heuristic uses the same opposite-triangle mapping.
+def getTargetSpots(app):
+    return {1: app.yellowSpots, 2: app.greenSpots, 3: app.blueSpots,
+            4: app.redSpots, 5: app.purpleSpots, 6: app.pinkSpots}
+
+
+def playerWins(app, state, player):
+    return all(state[row][col] == player
+               for row, col in getTargetSpots(app)[player])
+
+
+def markWinner(app, player):
+    if playerWins(app, app.board, player):
+        app.winner = player
+        return True
+    return False
+
+
 def redWins(app):
-    redSet = set()
-    for ball in app.balls:
-        if ball.color == "red":
-            redSet.add((ball.row, ball.col))
-    if redSet == app.yellowSpots:
-        app.winner = 1
-        return True
-    return False
+    return markWinner(app, 1)
 
-# determine if player 2 won
+
 def purpleWins(app):
-    purpleSet = set()
-    for ball in app.balls:
-        if ball.color == "purple2":
-            purpleSet.add((ball.row, ball.col))
-    if purpleSet == app.greenSpots:
-        app.winner = 2
-        return True
-    return False
+    return markWinner(app, 2)
 
-# determine if player 3 won
+
 def pinkWins(app):
-    pinkSet = set()
-    for ball in app.balls:
-        if ball.color == "hot pink":
-            pinkSet.add((ball.row, ball.col))
-    if pinkSet == app.blueSpots:
-        app.winner = 3
-        return True
-    return False
+    return markWinner(app, 3)
 
-#determine if player 4 won
+
 def yellowWins(app):
-    yellowSet = set()
-    for ball in app.balls:
-        if ball.color == "yellow":
-            yellowSet.add((ball.row, ball.col))
-    if yellowSet == app.redSpots:
-        app.winner = 4
-        return True
-    return False
+    return markWinner(app, 4)
 
-# determine if player 5 won
+
 def greenWins(app):
-    greenSet = set()
-    for ball in app.balls:
-        if ball.color == "lime green":
-            greenSet.add((ball.row, ball.col))
-    if greenSet == app.purpleSpots:
-        app.winner = 5
-        return True
-    return False
+    return markWinner(app, 5)
 
-# determine if player 6 won
+
 def blueWins(app):
-    blueSet = set()
-    for ball in app.balls:
-        if ball.color == "deep sky blue":
-            blueSet.add((ball.row, ball.col))
-    if blueSet == app.pinkSpots:
-        app.winner = 6
-        return True
+    return markWinner(app, 6)
+
+
+# Called once animations settle, when board and piece coordinates agree.
+def gameIsOver(app):
+    for player in app.players:
+        if markWinner(app, player):
+            app.currentPlayer = -1
+            return True
     return False
 
-# determine if game ended/if any player won
-def gameIsOver(app):
-    if (redWins(app) or purpleWins(app) or pinkWins(app) or yellowWins(app) or
-        greenWins(app) or blueWins(app)):
-        app.currentPlayer = -1
-        return True
-    return False
-    
 #################################################
 
 # get the bounding coordinates of a cell in a grid
@@ -545,17 +520,12 @@ def getAllTurnMoves(app, row, col, state, jumpsOnly=False):
 
 # determine from a state if the human player won
 def humanPlayerWins(app, state):
-    for (row, col) in app.yellowSpots:
-        if state[row][col] != 1:
-            return False
-    return True
+    return playerWins(app, state, 1)
+
 
 # determine from a state if the AI opponent won
 def AIOpponentWins(app, state):
-    for (row, col) in app.redSpots:
-        if state[row][col] != 4:
-            return False
-    return True
+    return playerWins(app, state, 4)
 
 # determine if a game with an AI has ended
 def AIGameOver(app, state):
@@ -636,8 +606,8 @@ def getValue(app, state):
                 aiPieces.append((row, col))
             elif state[row][col] == 1:
                 humanPieces.append((row, col))
-    return (playerProgress(aiPieces, app.redSpots) -
-            playerProgress(humanPieces, app.yellowSpots))
+    return (playerProgress(aiPieces, getTargetSpots(app)[4]) -
+            playerProgress(humanPieces, getTargetSpots(app)[1]))
 
 # decide on best possible move for AI
 # https://github.com/Cledersonbc/tic-tac-toe-minimax
@@ -659,7 +629,7 @@ def minimax(app, state, depth, player, selected=None, jumpsOnly=False,
 
     def movePriority(move, side):
         row, col, newRow, newCol = move
-        targets = app.redSpots if side == 4 else app.yellowSpots
+        targets = getTargetSpots(app)[side]
         oldDistance = min(hexDistance((row, col), target) for target in targets)
         newDistance = min(hexDistance((newRow, newCol), target) for target in targets)
         return (oldDistance - newDistance +
