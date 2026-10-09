@@ -6,6 +6,7 @@
 
 from cmu_112_graphics import *
 from math import inf as infinity
+from collections import deque
 import time
 
 # create class for a ball
@@ -59,6 +60,7 @@ def appStarted(app):
     app.gameOver = False
     app.gameStarted = False
     app.givingHint = False
+    app.hintEndTurn = False
     app.hintBall = (-1, -1) # location of ball that the hint says to move
     app.hintLocation = (-1, -1) # location that the hint says to move to
     app.timeRemaining = 30
@@ -66,6 +68,8 @@ def appStarted(app):
     app.winner = None
     app.balls = set()
     app.AIBalls = []
+    app.aiBall = None
+    app.aiPath = deque()
     app.timerDelay = 15
     setUpPlayers(app)
 
@@ -147,80 +151,56 @@ def setUpBlue(app):
 
 #################################################
 
-# determine if player 1 won
+# Every rule and heuristic uses the same opposite-triangle mapping.
+def getTargetSpots(app):
+    return {1: app.yellowSpots, 2: app.greenSpots, 3: app.blueSpots,
+            4: app.redSpots, 5: app.purpleSpots, 6: app.pinkSpots}
+
+
+def playerWins(app, state, player):
+    return all(state[row][col] == player
+               for row, col in getTargetSpots(app)[player])
+
+
+def markWinner(app, player):
+    if playerWins(app, app.board, player):
+        app.winner = player
+        return True
+    return False
+
+
 def redWins(app):
-    redSet = set()
-    for ball in app.balls:
-        if ball.color == "red":
-            redSet.add((ball.row, ball.col))
-    if redSet == app.yellowSpots:
-        app.winner = 1
-        return True
-    return False
+    return markWinner(app, 1)
 
-# determine if player 2 won
+
 def purpleWins(app):
-    purpleSet = set()
-    for ball in app.balls:
-        if ball.color == "purple2":
-            purpleSet.add((ball.row, ball.col))
-    if purpleSet == app.greenSpots:
-        app.winner = 2
-        return True
-    return False
+    return markWinner(app, 2)
 
-# determine if player 3 won
+
 def pinkWins(app):
-    pinkSet = set()
-    for ball in app.balls:
-        if ball.color == "hot pink":
-            pinkSet.add((ball.row, ball.col))
-    if pinkSet == app.blueSpots:
-        app.winner = 3
-        return True
-    return False
+    return markWinner(app, 3)
 
-#determine if player 4 won
+
 def yellowWins(app):
-    yellowSet = set()
-    for ball in app.balls:
-        if ball.color == "yellow":
-            yellowSet.add((ball.row, ball.col))
-    if yellowSet == app.blueSpots:
-        app.winner = 4
-        return True
-    return False
+    return markWinner(app, 4)
 
-# determine if player 5 won
+
 def greenWins(app):
-    greenSet = set()
-    for ball in app.balls:
-        if ball.color == "lime green":
-            greenSet.add((ball.row, ball.col))
-    if greenSet == app.purpleSpots:
-        app.winner = 5
-        return True
-    return False
+    return markWinner(app, 5)
 
-# determine if player 6 won
+
 def blueWins(app):
-    blueSet = set()
-    for ball in app.balls:
-        if ball.color == "deep sky blue":
-            blueSet.add((ball.row, ball.col))
-    if blueSet == app.pinkSpots:
-        app.winner = 6
-        return True
+    return markWinner(app, 6)
+
+
+# Called once animations settle, when board and piece coordinates agree.
+def gameIsOver(app):
+    for player in app.players:
+        if markWinner(app, player):
+            app.currentPlayer = -1
+            return True
     return False
 
-# determine if game ended/if any player won
-def gameIsOver(app):
-    if (redWins(app) or purpleWins(app) or pinkWins(app) or yellowWins(app) or
-        greenWins(app) or blueWins(app)):
-        app.currentPlayer = -1
-        return True
-    return False
-    
 #################################################
 
 # get the bounding coordinates of a cell in a grid
@@ -327,15 +307,8 @@ def isLegalMove(app, ballRow, ballCol, row, col, board):
 
 # update all moving balls' coordinates
 def timerFired(app):
-    if gameIsOver(app): # check if game is over
-        app.gameOver = True
-    # only start AI turn once current player's ball stops moving
-    if app.currentPlayer == 4 and app.numPlayers == 1 and (not ballsMoving(app)):
-        moveAI(app)
-    if time.time() - app.currentTime >= 30: # change player if timed turn has
-                                            # ended
-        app.selection = (-1, -1)
-        changePlayer(app)
+    if app.gameOver:
+        return
     for ball in app.balls:
         if ball.isMoving:
             (currX0, currY0, currX1, currY1) = getCellBounds(app,
@@ -359,13 +332,37 @@ def timerFired(app):
                 ball.isMoving = False
                 ball.row = ball.newRow
                 ball.col = ball.newCol
+    if ballsMoving(app):
+        return
+    # Finish an AI jump chain before ending its turn or declaring a winner.
+    if app.aiPath:
+        moveBall(app, app.aiBall, *app.aiPath.popleft())
+        return
+    if gameIsOver(app):
+        app.gameOver = True
+        return
+    if app.aiBall is not None:
+        app.aiBall = None
+        app.isJumping = False
+        changePlayer(app)
+        return
+    if app.currentPlayer == 4 and app.numPlayers == 1:
+        moveAI(app)
+    elif time.time() - app.currentTime >= 30:
+        app.selection = (-1, -1)
+        app.isJumping = False
+        changePlayer(app)
     
 # move ball when ball is pressed
 def mousePressed(app, event):
     if app.givingHint:
         app.givingHint = False
+    if checkButtons(app, event.x, event.y):
+        return
+    # Animated positions must settle before another move can use them.
+    if ballsMoving(app) or app.aiBall is not None or app.gameOver:
+        return
     (row, col) = getCell(app, event.x, event.y)
-    checkButtons(app, event.x, event.y)
     if app.selection == (-1, -1):
         for ball in app.balls:
             if ((ball.row, ball.col) == (row, col) and
@@ -404,14 +401,21 @@ def checkButtons(app, x, y):
     # begin new game if new game button is clicked
     if ((x < cx + 90) and (x > cx - 90) and (y < cy + 20) and (y > cy - 20)):
         appStarted(app)
+        return True
     cx, cy = app.width - (app.width / 6), app.height / 12
     # give the player a hint if hint button is clicked
     if ((x < cx + 30) and (x > cx - 30) and (y < cy + 20) and (y > cy - 20) and
-        app.numPlayers == 1 and app.currentPlayer == 1):
+        app.numPlayers == 1 and app.currentPlayer == 1 and
+        not ballsMoving(app) and not app.gameOver):
         givePlayerHint(app)
+        return True
+    return False
     
 # change the player to the next player in list of players
 def changePlayer(app):
+    app.isJumping = False
+    app.selection = (-1, -1)
+    app.givingHint = False
     currentIndex = app.players.index(app.currentPlayer)
     if app.numPlayers == 1: # account for AI opponent if number of players
                             # entered is equal to 1
@@ -427,11 +431,16 @@ def changePlayer(app):
 def moveAI(app):
     (ballRow, ballCol, newRow, newCol, value) = minimax(app, app.board, 3,
                                                         app.currentPlayer)
-    for ball in app.AIBalls:
-        if (ball.row, ball.col) == (ballRow, ballCol):
-            selectedBall = ball
-    moveBall(app, selectedBall, newRow, newCol)
-    changePlayer(app)
+    if ballRow == -1:
+        changePlayer(app)
+        return
+    app.aiBall = next(ball for ball in app.AIBalls
+                      if (ball.row, ball.col) == (ballRow, ballCol))
+    turns = getAllTurnMoves(app, ballRow, ballCol, app.board)
+    path = next(path for destination, path in turns
+                if destination == (newRow, newCol))
+    app.aiPath = deque(path)
+    moveBall(app, app.aiBall, *app.aiPath.popleft())
  
 # get all changes in row and column of a ball to make a move
 def getAllMoves(app, row, col, state):
@@ -449,7 +458,7 @@ def getAllJumps(app, row, col, state, possibleMoves):
     for (drow, dcol) in possibleMoves:
         midRow = row + drow
         midCol = col + dcol
-        if spotOnBoard(app, midRow, midCol) and app.board[midRow][midCol] != 0:
+        if spotOnBoard(app, midRow, midCol) and state[midRow][midCol] != 0:
         # check to make sure there is an intermmediate ball to jump over
             newDRow = 2 * drow
             newDCol = 2 * dcol
@@ -468,7 +477,7 @@ def getAllLegalJumps(app, row, col, state, possibleMoves):
     for (drow, dcol) in possibleJumps:
         newRow = row + drow
         newCol = col + dcol
-        if isLegalMove(app, row, col, newRow, newCol, state):
+        if spotOnBoard(app, newRow, newCol) and state[newRow][newCol] == 0:
             allLegalJumps.append((drow, dcol)) # check if all possible jumps are
                                                # legal
     return allLegalJumps
@@ -485,83 +494,237 @@ def getAllLegalMoves(app, row, col, state):
                                                    # step moves are legal
     return allLegalMoves
 
+# Generate complete turns, including every reachable end of a jump chain.
+# Each destination keeps one shortest path for animation; cycles are discarded.
+def getAllTurnMoves(app, row, col, state, jumpsOnly=False):
+    turns = []
+    directions = app.oddMoves if row % 2 else app.evenMoves
+    if not jumpsOnly:
+        for dr, dc in directions:
+            destination = (row + dr, col + dc)
+            if (spotOnBoard(app, *destination) and
+                state[destination[0]][destination[1]] == 0):
+                turns.append((destination, (destination,)))
+    # The moving piece vacates its origin, which cannot act as a jump bridge.
+    jumpState = [line[:] for line in state]
+    jumpState[row][col] = 0
+    visited = {(row, col)}
+    pending = deque([((row, col), ())])
+    while pending:
+        (r, c), path = pending.popleft()
+        directions = app.oddMoves if r % 2 else app.evenMoves
+        for dr, dc in getAllLegalJumps(app, r, c, jumpState, directions):
+            destination = (r + dr, c + dc)
+            if destination not in visited:
+                visited.add(destination)
+                nextPath = path + (destination,)
+                turns.append((destination, nextPath))
+                pending.append((destination, nextPath))
+    return turns
+
 # determine from a state if the human player won
 def humanPlayerWins(app, state):
-    for (row, col) in app.yellowSpots:
-        if state[row][col] != 1:
-            return False
-    return True
+    return playerWins(app, state, 1)
+
 
 # determine from a state if the AI opponent won
 def AIOpponentWins(app, state):
-    for (row, col) in app.redSpots:
-        if state[row][col] != 4:
-            return False
-    return True
+    return playerWins(app, state, 4)
 
 # determine if a game with an AI has ended
 def AIGameOver(app, state):
     return humanPlayerWins(app, state) or AIOpponentWins(app, state)
 
-# determine the value of a state
+WIN_SCORE = 1000000
+
+# Convert the offset grid to axial hex coordinates before measuring distance.
+def hexDistance(first, second):
+    r1, c1 = first
+    r2, c2 = second
+    q1 = c1 - (r1 + r1 % 2) // 2
+    q2 = c2 - (r2 + r2 % 2) // 2
+    dq, dr = q1 - q2, r1 - r2
+    return max(abs(dq), abs(dr), abs(dq + dr))
+
+# Hungarian assignment: match each piece to a distinct destination in O(n^3).
+# Rectangular matrices are supported when there are fewer pieces than targets.
+def minimumAssignmentCost(costs):
+    if not costs:
+        return 0
+    n, m = len(costs), len(costs[0])
+    if n > m:
+        raise ValueError("There must be at least one target per piece")
+    u, v = [0] * (n + 1), [0] * (m + 1)
+    matched, previous = [0] * (m + 1), [0] * (m + 1)
+    for piece in range(1, n + 1):
+        matched[0] = piece
+        column = 0
+        minimum, used = [infinity] * (m + 1), [False] * (m + 1)
+        while True:
+            used[column] = True
+            current = matched[column]
+            delta, nextColumn = infinity, 0
+            for candidate in range(1, m + 1):
+                if not used[candidate]:
+                    cost = costs[current - 1][candidate - 1] - u[current] - v[candidate]
+                    if cost < minimum[candidate]:
+                        minimum[candidate] = cost
+                        previous[candidate] = column
+                    if minimum[candidate] < delta:
+                        delta, nextColumn = minimum[candidate], candidate
+            for candidate in range(m + 1):
+                if used[candidate]:
+                    u[matched[candidate]] += delta
+                    v[candidate] -= delta
+                else:
+                    minimum[candidate] -= delta
+            column = nextColumn
+            if matched[column] == 0:
+                break
+        while column:
+            matched[column] = matched[previous[column]]
+            column = previous[column]
+    return -v[0]
+
+def playerProgress(pieces, targets):
+    if not pieces:
+        return 0
+    distances = [[hexDistance(piece, target) for target in sorted(targets)]
+                 for piece in pieces]
+    assignment = minimumAssignmentCost(distances)
+    stranded = max(min(row) for row in distances)
+    home = sum(piece in targets for piece in pieces)
+    return -4 * assignment - 2 * stranded + 8 * home
+
+# Terminal results dominate positional scores. Geometry is a heuristic for
+# progress, not an exact turn count: other pieces may enable long jump chains.
 def getValue(app, state):
-    value = 0
+    if AIOpponentWins(app, state):
+        return WIN_SCORE
+    if humanPlayerWins(app, state):
+        return -WIN_SCORE
+    aiPieces, humanPieces = [], []
     for row in range(len(state)):
         for col in range(len(state[0])):
             if state[row][col] == 4:
-                value += row
+                aiPieces.append((row, col))
             elif state[row][col] == 1:
-                value -= (16 - row)
-    return value
+                humanPieces.append((row, col))
+    return (playerProgress(aiPieces, getTargetSpots(app)[4]) -
+            playerProgress(humanPieces, getTargetSpots(app)[1]))
 
 # decide on best possible move for AI
 # https://github.com/Cledersonbc/tic-tac-toe-minimax
 # /blob/master/py_version/minimax.py
-def minimax(app, state, depth, player):
-    if player == 4:
-        best = [-1, -1, -1, -1, -infinity] # higher values are more beneficial for
-                                           # AI 
-        nextPlayer = 1
-    else:
-        best = [-1, -1, -1, -1, infinity] # lower values are more beneficial for
-                                          # player
-        nextPlayer = 4
-    if depth == 0 or AIGameOver(app, state): 
-        score = getValue(app, state)
-        return [-1, -1, -1, -1, score]
-    currentState = copy.deepcopy(state)
-    if not app.isJumping:
+def minimax(app, state, depth, player, selected=None, jumpsOnly=False,
+            searchStats=None):
+    # Copy once at the boundary; recursive nodes make and undo their moves.
+    board = [row[:] for row in state]
+    table, evaluations = {}, {}
+    stats = searchStats if searchStats is not None else {}
+    stats.update(nodes=0, cutoffs=0, cacheHits=0, evaluationHits=0)
+
+    def evaluate(key):
+        if key in evaluations:
+            stats["evaluationHits"] += 1
+        else:
+            evaluations[key] = getValue(app, board)
+        return evaluations[key]
+
+    def movePriority(move, side):
+        row, col, newRow, newCol = move
+        targets = getTargetSpots(app)[side]
+        oldDistance = min(hexDistance((row, col), target) for target in targets)
+        newDistance = min(hexDistance((newRow, newCol), target) for target in targets)
+        return (oldDistance - newDistance +
+                2 * (int((newRow, newCol) in targets) - int((row, col) in targets)))
+
+    def search(remaining, side, alpha, beta, restricted=None, jumps=False):
+        stats["nodes"] += 1
+        position = tuple(tuple(row) for row in board)
+        key = (position, remaining, side, restricted, jumps)
+        originalAlpha, originalBeta = alpha, beta
+        cached = table.get(key)
+        if cached is not None:
+            stats["cacheHits"] += 1
+            result, bound = cached
+            if bound == "exact":
+                return result[:]
+            if bound == "lower":
+                alpha = max(alpha, result[-1])
+            else:
+                beta = min(beta, result[-1])
+            if alpha >= beta:
+                return result[:]
+        if remaining == 0 or AIGameOver(app, board):
+            result = [-1, -1, -1, -1, evaluate(position)]
+            table[key] = (result[:], "exact")
+            return result
+        opponent = 1 if side == 4 else 4
+        moves = []
+        # Ending a partial jump chain consumes the remainder of this turn.
+        if jumps and restricted is not None:
+            moves.append((*restricted, *restricted))
         for row in range(app.rows):
             for col in range(app.cols):
-                if state[row][col] == player:
-                    moves = getAllLegalMoves(app, row, col, state)
-                    for (newRow, newCol) in moves:
-                        # adjust state to account for changes in ball positions
-                        currentState[row][col] = 0
-                        currentState[newRow][newCol] = player
-                        score = minimax(app, currentState, depth - 1, nextPlayer)
-                        # backtrack the state
-                        currentState[row][col] = player
-                        currentState[newRow][newCol] = 0
-                        # adjust score to return best ball to move and best location
-                        # to move it to
-                        score[0] = row
-                        score[1] = col
-                        score[2] = newRow
-                        score[3] = newCol
-                        if player == 4:
-                            if score[-1] > best[-1]:
-                                best = score
-                        else:
-                            if score[-1] < best[-1]:
-                                best = score
+                if board[row][col] != side:
+                    continue
+                if restricted is not None and (row, col) != restricted:
+                    continue
+                moves.extend((row, col, *destination)
+                             for destination, path in
+                             getAllTurnMoves(app, row, col, board, jumps))
+        moves.sort(key=lambda move: movePriority(move, side), reverse=True)
+        best = [-1, -1, -1, -1, -infinity if side == 4 else infinity]
+        for row, col, newRow, newCol in moves:
+            oldSource, oldDestination = board[row][col], board[newRow][newCol]
+            board[row][col] = 0
+            board[newRow][newCol] = side
+            try:
+                score = search(remaining - 1, opponent, alpha, beta)[-1]
+            finally:
+                board[row][col] = oldSource
+                board[newRow][newCol] = oldDestination
+            if ((side == 4 and score > best[-1]) or
+                (side == 1 and score < best[-1])):
+                best = [row, col, newRow, newCol, score]
+            if side == 4:
+                alpha = max(alpha, best[-1])
+            else:
+                beta = min(beta, best[-1])
+            if alpha >= beta:
+                stats["cutoffs"] += 1
+                break
+        if not moves:
+            best[-1] = evaluate(position)
+        # Cutoff results are bounds, not exact scores: keep that distinction
+        # when a transposition is encountered with a different search window.
+        bound = ("upper" if best[-1] <= originalAlpha else
+                 "lower" if best[-1] >= originalBeta else "exact")
+        table[key] = (best[:], bound)
         return best
 
-# use minimax to give the player a hint
+    return search(depth, player, -infinity, infinity, selected, jumpsOnly)
+
+# Hints show the next hop, even when search chooses a longer jump chain.
 def givePlayerHint(app):
-    (ballRow, ballCol, newRow, newCol, value) = minimax(app, app.board, 3, 1)
+    if app.gameOver or ballsMoving(app):
+        return
+    selected = app.selection if app.isJumping else None
+    result = minimax(app, app.board, 3, 1, selected, app.isJumping)
+    ballRow, ballCol, newRow, newCol, value = result
+    if ballRow == -1:
+        app.givingHint = False
+        return
     app.hintBall = (ballRow, ballCol)
-    app.hintLocation = (newRow, newCol)
+    destination = (newRow, newCol)
+    app.hintEndTurn = destination == app.hintBall
+    if app.hintEndTurn:
+        app.hintLocation = app.hintBall
+    else:
+        turns = getAllTurnMoves(app, ballRow, ballCol, app.board, app.isJumping)
+        path = next(path for target, path in turns if target == destination)
+        app.hintLocation = path[0]
     app.givingHint = True
 
 #################################################
@@ -630,7 +793,9 @@ def drawMessage(app, canvas):
         if app.isJumping:
             # give instructions about ending turn
             cy = app.height - (app.height / 8)
-            message = "Click anywhere on the board to end your turn"
+            message = ("Hint: click the selected piece to end your turn"
+                       if app.givingHint and app.hintEndTurn else
+                       "Click anywhere on the board to end your turn")
             canvas.create_text(cx, cy, text = message, font = "futura 20")
         # display the remaining time left in a turn
         cx, cy = app.width / 6, app.height / 12
