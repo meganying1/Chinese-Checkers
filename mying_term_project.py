@@ -561,16 +561,83 @@ def AIOpponentWins(app, state):
 def AIGameOver(app, state):
     return humanPlayerWins(app, state) or AIOpponentWins(app, state)
 
-# determine the value of a state
+WIN_SCORE = 1000000
+
+# Convert the offset grid to axial hex coordinates before measuring distance.
+def hexDistance(first, second):
+    r1, c1 = first
+    r2, c2 = second
+    q1 = c1 - (r1 + r1 % 2) // 2
+    q2 = c2 - (r2 + r2 % 2) // 2
+    dq, dr = q1 - q2, r1 - r2
+    return max(abs(dq), abs(dr), abs(dq + dr))
+
+# Hungarian assignment: match each piece to a distinct destination in O(n^3).
+# Rectangular matrices are supported when there are fewer pieces than targets.
+def minimumAssignmentCost(costs):
+    if not costs:
+        return 0
+    n, m = len(costs), len(costs[0])
+    if n > m:
+        raise ValueError("There must be at least one target per piece")
+    u, v = [0] * (n + 1), [0] * (m + 1)
+    matched, previous = [0] * (m + 1), [0] * (m + 1)
+    for piece in range(1, n + 1):
+        matched[0] = piece
+        column = 0
+        minimum, used = [infinity] * (m + 1), [False] * (m + 1)
+        while True:
+            used[column] = True
+            current = matched[column]
+            delta, nextColumn = infinity, 0
+            for candidate in range(1, m + 1):
+                if not used[candidate]:
+                    cost = costs[current - 1][candidate - 1] - u[current] - v[candidate]
+                    if cost < minimum[candidate]:
+                        minimum[candidate] = cost
+                        previous[candidate] = column
+                    if minimum[candidate] < delta:
+                        delta, nextColumn = minimum[candidate], candidate
+            for candidate in range(m + 1):
+                if used[candidate]:
+                    u[matched[candidate]] += delta
+                    v[candidate] -= delta
+                else:
+                    minimum[candidate] -= delta
+            column = nextColumn
+            if matched[column] == 0:
+                break
+        while column:
+            matched[column] = matched[previous[column]]
+            column = previous[column]
+    return -v[0]
+
+def playerProgress(pieces, targets):
+    if not pieces:
+        return 0
+    distances = [[hexDistance(piece, target) for target in sorted(targets)]
+                 for piece in pieces]
+    assignment = minimumAssignmentCost(distances)
+    stranded = max(min(row) for row in distances)
+    home = sum(piece in targets for piece in pieces)
+    return -4 * assignment - 2 * stranded + 8 * home
+
+# Terminal results dominate positional scores. Geometry is a heuristic for
+# progress, not an exact turn count: other pieces may enable long jump chains.
 def getValue(app, state):
-    value = 0
+    if AIOpponentWins(app, state):
+        return WIN_SCORE
+    if humanPlayerWins(app, state):
+        return -WIN_SCORE
+    aiPieces, humanPieces = [], []
     for row in range(len(state)):
         for col in range(len(state[0])):
             if state[row][col] == 4:
-                value += row
+                aiPieces.append((row, col))
             elif state[row][col] == 1:
-                value -= (16 - row)
-    return value
+                humanPieces.append((row, col))
+    return (playerProgress(aiPieces, app.redSpots) -
+            playerProgress(humanPieces, app.yellowSpots))
 
 # decide on best possible move for AI
 # https://github.com/Cledersonbc/tic-tac-toe-minimax
