@@ -642,36 +642,95 @@ def getValue(app, state):
 # decide on best possible move for AI
 # https://github.com/Cledersonbc/tic-tac-toe-minimax
 # /blob/master/py_version/minimax.py
-def minimax(app, state, depth, player, selected=None, jumpsOnly=False):
-    nextPlayer = 1 if player == 4 else 4
-    best = [-1, -1, -1, -1, -infinity if player == 4 else infinity]
-    if depth == 0 or AIGameOver(app, state):
-        return [-1, -1, -1, -1, getValue(app, state)]
-    # Ending an already-started jump chain is a legal choice.
-    if jumpsOnly and selected is not None:
-        score = minimax(app, state, depth - 1, nextPlayer)[-1]
-        best = [*selected, *selected, score]
-    currentState = copy.deepcopy(state)
-    for row in range(app.rows):
-        for col in range(app.cols):
-            if state[row][col] != player:
-                continue
-            if selected is not None and (row, col) != selected:
-                continue
-            moves = getAllTurnMoves(app, row, col, state, jumpsOnly)
-            for ((newRow, newCol), path) in moves:
-                currentState[row][col] = 0
-                currentState[newRow][newCol] = player
-                score = minimax(app, currentState, depth - 1, nextPlayer)[-1]
-                currentState[row][col] = player
-                currentState[newRow][newCol] = 0
-                if ((player == 4 and score > best[-1]) or
-                    (player == 1 and score < best[-1])):
-                    best = [row, col, newRow, newCol, score]
-    # A blocked position has a finite value and no selected move.
-    if best[0] == -1:
-        best[-1] = getValue(app, state)
-    return best
+def minimax(app, state, depth, player, selected=None, jumpsOnly=False,
+            searchStats=None):
+    # Copy once at the boundary; recursive nodes make and undo their moves.
+    board = [row[:] for row in state]
+    table, evaluations = {}, {}
+    stats = searchStats if searchStats is not None else {}
+    stats.update(nodes=0, cutoffs=0, cacheHits=0, evaluationHits=0)
+
+    def evaluate(key):
+        if key in evaluations:
+            stats["evaluationHits"] += 1
+        else:
+            evaluations[key] = getValue(app, board)
+        return evaluations[key]
+
+    def movePriority(move, side):
+        row, col, newRow, newCol = move
+        targets = app.redSpots if side == 4 else app.yellowSpots
+        oldDistance = min(hexDistance((row, col), target) for target in targets)
+        newDistance = min(hexDistance((newRow, newCol), target) for target in targets)
+        return (oldDistance - newDistance +
+                2 * (int((newRow, newCol) in targets) - int((row, col) in targets)))
+
+    def search(remaining, side, alpha, beta, restricted=None, jumps=False):
+        stats["nodes"] += 1
+        position = tuple(tuple(row) for row in board)
+        key = (position, remaining, side, restricted, jumps)
+        originalAlpha, originalBeta = alpha, beta
+        cached = table.get(key)
+        if cached is not None:
+            stats["cacheHits"] += 1
+            result, bound = cached
+            if bound == "exact":
+                return result[:]
+            if bound == "lower":
+                alpha = max(alpha, result[-1])
+            else:
+                beta = min(beta, result[-1])
+            if alpha >= beta:
+                return result[:]
+        if remaining == 0 or AIGameOver(app, board):
+            result = [-1, -1, -1, -1, evaluate(position)]
+            table[key] = (result[:], "exact")
+            return result
+        opponent = 1 if side == 4 else 4
+        moves = []
+        # Ending a partial jump chain consumes the remainder of this turn.
+        if jumps and restricted is not None:
+            moves.append((*restricted, *restricted))
+        for row in range(app.rows):
+            for col in range(app.cols):
+                if board[row][col] != side:
+                    continue
+                if restricted is not None and (row, col) != restricted:
+                    continue
+                moves.extend((row, col, *destination)
+                             for destination, path in
+                             getAllTurnMoves(app, row, col, board, jumps))
+        moves.sort(key=lambda move: movePriority(move, side), reverse=True)
+        best = [-1, -1, -1, -1, -infinity if side == 4 else infinity]
+        for row, col, newRow, newCol in moves:
+            oldSource, oldDestination = board[row][col], board[newRow][newCol]
+            board[row][col] = 0
+            board[newRow][newCol] = side
+            try:
+                score = search(remaining - 1, opponent, alpha, beta)[-1]
+            finally:
+                board[row][col] = oldSource
+                board[newRow][newCol] = oldDestination
+            if ((side == 4 and score > best[-1]) or
+                (side == 1 and score < best[-1])):
+                best = [row, col, newRow, newCol, score]
+            if side == 4:
+                alpha = max(alpha, best[-1])
+            else:
+                beta = min(beta, best[-1])
+            if alpha >= beta:
+                stats["cutoffs"] += 1
+                break
+        if not moves:
+            best[-1] = evaluate(position)
+        # Cutoff results are bounds, not exact scores: keep that distinction
+        # when a transposition is encountered with a different search window.
+        bound = ("upper" if best[-1] <= originalAlpha else
+                 "lower" if best[-1] >= originalBeta else "exact")
+        table[key] = (best[:], bound)
+        return best
+
+    return search(depth, player, -infinity, infinity, selected, jumpsOnly)
 
 # Hints show the next hop, even when search chooses a longer jump chain.
 def givePlayerHint(app):
