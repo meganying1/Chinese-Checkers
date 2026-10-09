@@ -6,6 +6,8 @@
 
 from cmu_112_graphics import *
 from math import inf as infinity
+from collections import deque
+import copy
 import time
 
 # create class for a ball
@@ -66,6 +68,8 @@ def appStarted(app):
     app.winner = None
     app.balls = set()
     app.AIBalls = []
+    app.aiBall = None
+    app.aiPath = deque()
     app.timerDelay = 15
     setUpPlayers(app)
 
@@ -327,15 +331,8 @@ def isLegalMove(app, ballRow, ballCol, row, col, board):
 
 # update all moving balls' coordinates
 def timerFired(app):
-    if gameIsOver(app): # check if game is over
-        app.gameOver = True
-    # only start AI turn once current player's ball stops moving
-    if app.currentPlayer == 4 and app.numPlayers == 1 and (not ballsMoving(app)):
-        moveAI(app)
-    if time.time() - app.currentTime >= 30: # change player if timed turn has
-                                            # ended
-        app.selection = (-1, -1)
-        changePlayer(app)
+    if app.gameOver:
+        return
     for ball in app.balls:
         if ball.isMoving:
             (currX0, currY0, currX1, currY1) = getCellBounds(app,
@@ -359,13 +356,36 @@ def timerFired(app):
                 ball.isMoving = False
                 ball.row = ball.newRow
                 ball.col = ball.newCol
+    if ballsMoving(app):
+        return
+    # Finish an AI jump chain before ending its turn or declaring a winner.
+    if app.aiPath:
+        moveBall(app, app.aiBall, *app.aiPath.popleft())
+        return
+    if gameIsOver(app):
+        app.gameOver = True
+        return
+    if app.aiBall is not None:
+        app.aiBall = None
+        app.isJumping = False
+        changePlayer(app)
+        return
+    if app.currentPlayer == 4 and app.numPlayers == 1:
+        moveAI(app)
+    elif time.time() - app.currentTime >= 30:
+        app.selection = (-1, -1)
+        app.isJumping = False
+        changePlayer(app)
     
 # move ball when ball is pressed
 def mousePressed(app, event):
+    checkButtons(app, event.x, event.y)
+    # Animated positions must settle before another move can use them.
+    if ballsMoving(app) or app.aiBall is not None or app.gameOver:
+        return
     if app.givingHint:
         app.givingHint = False
     (row, col) = getCell(app, event.x, event.y)
-    checkButtons(app, event.x, event.y)
     if app.selection == (-1, -1):
         for ball in app.balls:
             if ((ball.row, ball.col) == (row, col) and
@@ -427,11 +447,16 @@ def changePlayer(app):
 def moveAI(app):
     (ballRow, ballCol, newRow, newCol, value) = minimax(app, app.board, 3,
                                                         app.currentPlayer)
-    for ball in app.AIBalls:
-        if (ball.row, ball.col) == (ballRow, ballCol):
-            selectedBall = ball
-    moveBall(app, selectedBall, newRow, newCol)
-    changePlayer(app)
+    if ballRow == -1:
+        changePlayer(app)
+        return
+    app.aiBall = next(ball for ball in app.AIBalls
+                      if (ball.row, ball.col) == (ballRow, ballCol))
+    turns = getAllTurnMoves(app, ballRow, ballCol, app.board)
+    path = next(path for destination, path in turns
+                if destination == (newRow, newCol))
+    app.aiPath = deque(path)
+    moveBall(app, app.aiBall, *app.aiPath.popleft())
  
 # get all changes in row and column of a ball to make a move
 def getAllMoves(app, row, col, state):
@@ -485,6 +510,34 @@ def getAllLegalMoves(app, row, col, state):
                                                    # step moves are legal
     return allLegalMoves
 
+# Generate complete turns, including every reachable end of a jump chain.
+# Each destination keeps one shortest path for animation; cycles are discarded.
+def getAllTurnMoves(app, row, col, state, jumpsOnly=False):
+    turns = []
+    directions = app.oddMoves if row % 2 else app.evenMoves
+    if not jumpsOnly:
+        for dr, dc in directions:
+            destination = (row + dr, col + dc)
+            if (spotOnBoard(app, *destination) and
+                state[destination[0]][destination[1]] == 0):
+                turns.append((destination, (destination,)))
+    # The moving piece vacates its origin, which cannot act as a jump bridge.
+    jumpState = [line[:] for line in state]
+    jumpState[row][col] = 0
+    visited = {(row, col)}
+    pending = deque([((row, col), ())])
+    while pending:
+        (r, c), path = pending.popleft()
+        directions = app.oddMoves if r % 2 else app.evenMoves
+        for dr, dc in getAllLegalJumps(app, r, c, jumpState, directions):
+            destination = (r + dr, c + dc)
+            if destination not in visited:
+                visited.add(destination)
+                nextPath = path + (destination,)
+                turns.append((destination, nextPath))
+                pending.append((destination, nextPath))
+    return turns
+
 # determine from a state if the human player won
 def humanPlayerWins(app, state):
     for (row, col) in app.yellowSpots:
@@ -534,8 +587,8 @@ def minimax(app, state, depth, player):
         for row in range(app.rows):
             for col in range(app.cols):
                 if state[row][col] == player:
-                    moves = getAllLegalMoves(app, row, col, state)
-                    for (newRow, newCol) in moves:
+                    moves = getAllTurnMoves(app, row, col, state)
+                    for ((newRow, newCol), path) in moves:
                         # adjust state to account for changes in ball positions
                         currentState[row][col] = 0
                         currentState[newRow][newCol] = player
